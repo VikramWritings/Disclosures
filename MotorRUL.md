@@ -75,6 +75,8 @@ The proposed RUL model is uniquely compatible with Vector Motor Drives (FOC) by 
 *   **Sensorless Symmetry:** Because FOC already requires high-resolution phase current sensing and rotor position estimation, no additional hardware is required to capture the **$\Delta f_r$ shift**.
 
 ## Block Diagram and System Architecture
+
+```mermaid
 graph LR
     subgraph "Standard FOC Loop"
     Ref[Speed/Torque Ref] --> PI[PI Current Controllers]
@@ -98,3 +100,4 @@ graph LR
     Ext -->|Impedance & Resonance| HM
     PI -->|Observe Control Effort| HM
     HM -->|RUL & Health Status| UI[User Interface / Cloud]
+```
