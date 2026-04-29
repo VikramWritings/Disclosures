@@ -66,3 +66,35 @@ The use of the **resonance frequency peak** as a proxy for the physical state of
 The RUL is estimated using a **Particle Filter** or **Exponential Regression** based on the Health Index (HI):
 $$HI(t) = w_1 \cdot \Delta f_r + w_2 \cdot \Delta R + w_3 \cdot \Delta \lambda$$
 Where $w_i$ are sensitivity weights. The RUL is defined as the time $t$ remaining until $HI(t)$ reaches a critical failure threshold defined by material safety limits.
+
+## 8. Implementation in Field-Oriented Control (FOC) Systems
+The proposed RUL model is uniquely compatible with Vector Motor Drives (FOC) by utilizing the decoupled control of flux and torque:
+
+*   **D-Axis Perturbation:** High-frequency voltage is injected into the d-axis ($V_d$) to measure the **impedance resonance** of the magnetic circuit without impacting torque ripple or mechanical stability.
+*   **Real-Time Parameter Estimation:** The FOC current regulators act as a natural filter, allowing the system to extract winding resistance and inductance changes as "model errors" during standard operation.
+*   **Sensorless Symmetry:** Because FOC already requires high-resolution phase current sensing and rotor position estimation, no additional hardware is required to capture the **$\Delta f_r$ shift**.
+
+## Block Diagram and System Architecture
+graph LR
+    subgraph "Standard FOC Loop"
+    Ref[Speed/Torque Ref] --> PI[PI Current Controllers]
+    PI --> InvPark[Inverse Park Transform]
+    InvPark --> PWM[SVPWM / Inverter]
+    PWM --> Motor((Motor))
+    Motor --> ADC[Current Sensing]
+    ADC --> Park[Park Transform]
+    Park --> PI
+    end
+
+    subgraph "Health Monitor System"
+    HM[Health Monitor / RUL Predictor]
+    Inj[HF Injection Module]
+    Ext[Signal Extraction & FFT]
+    end
+
+    %% Connections
+    Inj -.->|Inject HF Signal| InvPark
+    ADC -.->|Raw Current Data| Ext
+    Ext -->|Impedance & Resonance| HM
+    PI -->|Observe Control Effort| HM
+    HM -->|RUL & Health Status| UI[User Interface / Cloud]
