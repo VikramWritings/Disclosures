@@ -104,7 +104,62 @@ graph LR
 ### 10. Embedded Implementation: Parameter Tracking
 To ensure robust RUL prediction, a **Recursive Linear Kalman Filter** is implemented to track the state of Inductance ($L$). The filter utilizes a process noise covariance ($Q$) tuned to the expected material degradation rate and a measurement noise covariance ($R$) tuned to the inverter's current-sensing resolution. This ensures that transient noise from PWM switching does not trigger false RUL alerts.
 
-### 11. C Template
+## 11. Step-by-Step Implementation Logic
+
+The implementation of the Multi-Physics RUL model follows a cyclic execution path, transitioning from high-frequency signal acquisition to low-frequency statistical forecasting.
+
+### Phase 1: Baseline Commissioning (Day 0)
+1.  **Factory Calibration:** Upon first power-up, the inverter performs a wide-band frequency sweep (1 kHz – 20 kHz).
+2.  **Fingerprint Extraction:** The initial Impedance Plot ($Z_{base}$) and Resonance Peak ($f_{r0}$) are stored in non-volatile memory (EEPROM/Flash).
+3.  **Prior Distribution:** Initial Bayesian "beliefs" are set based on the motor's datasheet and material tolerances.
+
+---
+
+### Phase 2: Periodic Diagnostic Probing (Operational)
+Performed during motor standby or at specific intervals (e.g., every 50 power cycles).
+
+1.  **D-Axis Injection:** The Vector Drive injects a small-signal sinusoidal voltage $V_d^*$ into the Park Transform.
+2.  **Current Acquisition:** Phase current responses are sampled at a rate $f_s \geq 2 \times f_{pwm}$.
+3.  **Spectral Analysis:**
+    *   Apply a **Goertzel Filter** or **FFT** to the sampled data.
+    *   Compute the real and imaginary components of the impedance.
+    *   Identify the new resonance peak frequency ($f_{r\_current}$).
+
+---
+
+### Phase 3: Bayesian Parameter Tracking
+The raw measurements are processed through Recursive Bayesian Filters (Kalman Filters) to distinguish between transient noise and permanent aging.
+
+1.  **Measurement Update:** Calculate the **Resonance Shift**:
+    $$\Delta f_r = f_{r\_current} - f_{r0}$$
+2.  **Parameter Estimation:** 
+    *   The **Kalman Filter** updates the estimated Inductance ($L$) and Resistance ($R$).
+    *   The **Magnetic Observer** updates the Flux Linkage ($\lambda$) estimate.
+3.  **Health Index (HI) Fusion:**
+    *   Normalize all parameters into a 0.0 to 1.0 scale.
+    *   Compute $HI = (w_1 \cdot \Delta f_r) + (w_2 \cdot \Delta R) + (w_3 \cdot \Delta \lambda)$.
+
+---
+
+### Phase 4: RUL Forecasting (Statistical Model)
+1.  **Degradation Slope Calculation:** The system calculates the rate of change of the Health Index ($dHI/dt$).
+2.  **Probability Projection:** A Bayesian linear regression projects the $HI$ curve forward in time.
+3.  **Failure Threshold Check:** 
+    *   Define $HI_{crit}$ (e.g., 0.3 or 30% health).
+    *   Solve for $t_{fail}$ where $HI(t) = HI_{crit}$.
+4.  **RUL Output:** 
+    $$RUL = t_{fail} - t_{current}$$
+    *The system outputs a time value (hours/days) and a confidence interval (e.g., $\pm 5\%$).*
+
+---
+
+### Phase 5: Action & Reporting
+*   **Case A (Stable):** Store data and resume normal operation.
+*   **Case B (Degrading):** Flag "Preventative Maintenance" via UI/Cloud API.
+*   **Case C (Critical):** Trigger "Limp Home Mode" to reduce thermal stress and prevent catastrophic failure.
+
+
+### 12. C Template
 
 ```
 #include <stdio.h>
