@@ -1,17 +1,11 @@
 # Disclosures
 
-- `MotorRUL.md` — Motor Remaining Useful Life (RUL) analysis and related data.
-- `SystemArch.mmd` — System architecture diagram (Mermaid) describing system components and interactions.
-- `README.md` — This file: a short index of disclosures.
-
 This repository contains the following disclosure documents:
 A small collection of disclosure documents and notes related to motor RUL analyses
 and system architecture. Use this README as a quick index to the repository.
 
 Contents
 -
-- `MotorRUL.md` — Motor Remaining Useful Life (RUL) analysis: datasets, modeling
-	approach, results and conclusions.
 - `ImpedencePlotBasedRul/ImpedencePlotBasedRul.md` — Notes and plots for
 	impedance-plot-based RUL estimation (subfolder contains figures/data).
 - `SystemArch.mmd` — Mermaid diagram describing the system architecture and
