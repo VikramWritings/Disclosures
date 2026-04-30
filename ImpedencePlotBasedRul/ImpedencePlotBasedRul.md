@@ -74,7 +74,7 @@ The proposed RUL model is uniquely compatible with Vector Motor Drives (FOC) by 
 *   **Real-Time Parameter Estimation:** The FOC current regulators act as a natural filter, allowing the system to extract winding resistance and inductance changes as "model errors" during standard operation.
 *   **Sensorless Symmetry:** Because FOC already requires high-resolution phase current sensing and rotor position estimation, no additional hardware is required to capture the **$\Delta f_r$ shift**.
 
-## Block Diagram and System Architecture
+## 9 Block Diagram and System Architecture
 
 ```mermaid
 graph LR
@@ -100,4 +100,75 @@ graph LR
     Ext -->|Impedance & Resonance| HM
     PI -->|Observe Control Effort| HM
     HM -->|RUL & Health Status| UI[User Interface / Cloud]
+```
+### 10. Embedded Implementation: Parameter Tracking
+To ensure robust RUL prediction, a **Recursive Linear Kalman Filter** is implemented to track the state of Inductance ($L$). The filter utilizes a process noise covariance ($Q$) tuned to the expected material degradation rate and a measurement noise covariance ($R$) tuned to the inverter's current-sensing resolution. This ensures that transient noise from PWM switching does not trigger false RUL alerts.
+
+### 11. C Template
+
+```
+#include <stdio.h>
+
+/**
+ * Kalman Filter Structure for Inductance Tracking
+ */
+typedef struct {
+    float L_estimate;    // The current estimate of Inductance (The State)
+    float P;             // Estimation error covariance
+    float Q;             // Process noise covariance (How much L fluctuates naturally)
+    float R;             // Measurement noise covariance (Sensor/PWM noise)
+    float K;             // Kalman Gain
+} InductanceKF;
+
+/**
+ * Initialize the Filter
+ * @param initial_L: The factory baseline inductance (e.g., 0.015 Henrys)
+ */
+void KF_Init(InductanceKF *kf, float initial_L) {
+    kf->L_estimate = initial_L;
+    kf->P = 0.1f;    // Initial uncertainty
+    kf->Q = 0.0001f; // Trust the model (L changes very slowly over months)
+    kf->R = 0.01f;   // Measurement noise (Trust the sensor data less than the model)
+}
+
+/**
+ * Update the Inductance Estimate
+ * @param measured_L: The L calculated from the current shift/impedance plot
+ * @return The filtered inductance estimate
+ */
+float KF_Update(InductanceKF *kf, float measured_L) {
+    // --- 1. PREDICT Step ---
+    // Since Inductance is a constant/slow-changing state, L_pred = L_last
+    // kf->L_estimate = kf->L_estimate; 
+    kf->P = kf->P + kf->Q;
+
+    // --- 2. MEASUREMENT UPDATE (Correction) Step ---
+    // Calculate Kalman Gain: K = P / (P + R)
+    kf->K = kf->P / (kf->P + kf->R);
+
+    // Update the State Estimate: L = L + K * (measured - L)
+    kf->L_estimate = kf->L_estimate + kf->K * (measured_L - kf->L_estimate);
+
+    // Update Error Covariance: P = (1 - K) * P
+    kf->P = (1.0f - kf->K) * kf->P;
+
+    return kf->L_estimate;
+}
+
+// Example Usage
+int main() {
+    InductanceKF myTracker;
+    KF_Init(&myTracker, 0.015f); // 15mH Baseline
+
+    // Simulated noisy measurements from the Impedance Plot
+    float noisy_measurements[] = {0.0148, 0.0152, 0.0145, 0.0149, 0.0147};
+
+    for(int i = 0; i < 5; i++) {
+        float filtered_L = KF_Update(&myTracker, noisy_measurements[i]);
+        printf("Measured: %.4f | Filtered L: %.4f\n", noisy_measurements[i], filtered_L);
+    }
+
+    return 0;
+}
+
 ```
