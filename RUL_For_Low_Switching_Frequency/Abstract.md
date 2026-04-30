@@ -13,10 +13,25 @@ This disclosure describes a method for predicting the **Remaining Useful Life (R
 
 ---
 
-## 3. Technical Constraints (8 kHz Environment)
-*   **The Nyquist Barrier:** Direct impedance measurement is limited to $< 4 \text{ kHz}$.
-*   **Switching Noise:** High-amplitude noise at 8 kHz, 16 kHz, and 24 kHz.
-*   **Solution:** The invention utilizes the **Step Response** of the PWM pulse. Each 8 kHz "edge" acts as a Dirac-like impulse, exciting high-frequency resonances that are captured via high-speed oversampling.
+## 3. Background of the Invention
+
+### 3.1 Field of the Invention
+The present invention relates generally to the field of predictive maintenance (PdM) for electromagnetic actuators. More specifically, it relates to the real-time estimation of Remaining Useful Life (RUL) in electric motors driven by low-frequency Pulse Width Modulation (PWM) inverters by monitoring the structural degradation of magnetic core materials and electrical insulation.
+
+### 3.2 Description of Related Art
+Current state-of-the-art motor diagnostics primarily rely on three methods:
+1. **Vibration Analysis:** Utilizes accelerometers to detect bearing wear or mechanical imbalance. This requires expensive external sensors and often detects failure only after physical damage has occurred.
+2. **Motor Current Signature Analysis (MCSA):** Analyzes the frequency spectrum of the stator current to find broken rotor bars or eccentricities. However, MCSA is typically effective only at steady-state high loads and is less sensitive to early-stage material aging.
+3. **Thermal Monitoring:** Uses thermistors to detect overheating. While useful, heat is often a *symptom* of failure rather than a predictive indicator of the underlying material decay.
+
+### 3.3 The "Blind Spot" in Low-Frequency Inverters
+In modern consumer appliances (e.g., HVAC compressors, washing machines, pumps), cost-effective inverters typically operate at a **PWM carrier frequency of 8 kHz**. This low switching frequency presents a significant technical barrier for modern "Health Index" algorithms:
+* **The Nyquist Limitation:** Standard controllers sampling at or near the 8 kHz carrier rate cannot "see" the high-frequency electrical resonances ($100\text{ kHz} - 1\text{ MHz}$) that signal the early stages of insulation thinning and dielectric breakdown.
+* **Magnetic Masking:** At 8 kHz, the fundamental current dominates the signal, masking the subtle changes in **Magnetic Permeability ($\mu$)** and **Core Loss** that occur as the silicon steel or ferrite core ages due to years of thermal and magnetic cycling.
+* **Lack of Material-Awareness:** Existing RUL models treat the motor as a "black box" circuit of fixed $L$ and $R$ values. They fail to account for the physical reality that $L$ is a dynamic variable that decays as the core material's magnetic domains fatigue over time.
+
+### 3.4 The Necessity of the Invention
+There is a critical need for a diagnostic method that can extract high-fidelity "Multi-Physics" health indicators—specifically **Magnetic Core Decay** and **Resonant Frequency Shifts**—using only the existing, low-speed 8 kHz hardware. By leveraging the intrinsic "noise" and "transients" of the 8 kHz switching events, this invention provides a high-sensitivity health forecast without the need for additional sensors or high-speed hardware upgrades.
 
 ---
 
