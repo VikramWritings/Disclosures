@@ -158,8 +158,47 @@ The raw measurements are processed through Recursive Bayesian Filters (Kalman Fi
 *   **Case B (Degrading):** Flag "Preventative Maintenance" via UI/Cloud API.
 *   **Case C (Critical):** Trigger "Limp Home Mode" to reduce thermal stress and prevent catastrophic failure.
 
+## 12. Comparison to Prior Art
 
-### 12. C Template
+This section identifies the "Inventive Step" by distinguishing the present invention from existing Motor Health Monitoring (MHM) and Prognostics and Health Management (PHM) systems.
+
+### A. Comparison Table
+
+
+| Feature | Conventional Systems (Prior Art) | Proposed Invention |
+| :--- | :--- | :--- |
+| **Primary Data Source** | Mechanical (Vibration, Acoustic) | **Electro-Magnetic (Impedance Spectrum)** |
+| **Hardware Requirement** | External Accelerometers/Flux Sensors | **Sensorless (Uses existing PWM Inverter)** |
+| **Degradation Focus** | Structural (Bearings, Gearbox) | **Material (Core Permeability & Insulation)** |
+| **Detection Method** | Threshold-based (Current/Temp) | **Spectral-Shift ($\Delta f_r$) & Bayesian Fusion** |
+| **Predictive Power** | Diagnostic (Detects existing fault) | **Prognostic (Calculates Remaining Life)** |
+
+---
+
+### B. Technical Differentiators
+
+#### 1. Transition from Fault Detection to Material Prognostics
+Conventional prior art focuses on **fault detection** (e.g., US Patent for Motor Current Signature Analysis - MCSA), which identifies damage that has *already occurred*, such as broken rotor bars. This invention focuses on **material-level aging** (permeability decay and dielectric thinning) before physical damage is present, using the resonance shift as a leading indicator.
+
+#### 2. Utilization of d-axis Signal Injection for Diagnostics
+While high-frequency signal injection is used in prior art for "Sensorless Position Control" (to find the rotor at zero speed), the present invention utilizes this mechanism for **material characterization**. Using the **d-axis** specifically allows for an "acoustically transparent" diagnostic sweep that does not interfere with torque production ($q$-axis), a capability not typically claimed in health monitoring patents.
+
+#### 3. Fusion of Multi-Physics Health Indicators
+Many existing RUL models rely on a single data stream (e.g., temperature). The present invention's novelty lies in its **Bayesian Fusion** of three disparate physical phenomena:
+*   The **Electrical** time constant ($L/R$)
+*   The **Magnetic** flux linkage ($\lambda$)
+*   The **Derived** spectral resonance ($f_r$)
+By correlating these, the system can distinguish between a temporary thermal event (resistance spike) and permanent material aging (inductance/permeability drop).
+
+#### 4. "Hardware-Free" Lifecycle Tracking
+Unlike prior art that requires high-fidelity Data Acquisition (DAQ) systems for Impedance Spectroscopy, this invention performs the calculation on the **embedded microcontroller** of a Vector Drive. This enables "Cradle-to-Grave" health tracking of a consumer appliance without increasing the Bill of Materials (BOM) cost.
+
+---
+
+### C. Non-Obviousness Argument
+It is not "obvious" to a person skilled in the art to use an inverter's PWM switching noise or carrier signals to measure the aging of a magnetic core. While the components (Inverters, Motors, FFTs) exist, their **specific configuration** to track resonance frequency as a proxy for remaining useful life represents a significant and non-obvious technical advancement in the field of appliance intelligence.
+
+## 13. C Template
 
 ```
 #include <stdio.h>
