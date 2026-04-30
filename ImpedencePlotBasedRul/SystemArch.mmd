@@ -1,0 +1,26 @@
+---
+id: 5d7dc7dd-db1e-4710-9884-e89f40dbf03b
+---
+graph LR
+    subgraph "Standard FOC Loop"
+    Ref[Speed/Torque Ref] --> PI[PI Current Controllers]
+    PI --> InvPark[Inverse Park Transform]
+    InvPark --> PWM[SVPWM / Inverter]
+    PWM --> Motor((Motor))
+    Motor --> ADC[Current Sensing]
+    ADC --> Park[Park Transform]
+    Park --> PI
+    end
+
+    subgraph "Health Monitor System"
+    HM[Health Monitor / RUL Predictor]
+    Inj[HF Injection Module]
+    Ext[Signal Extraction & FFT]
+    end
+
+    %% Connections
+    Inj -.->|Inject HF Signal| InvPark
+    ADC -.->|Raw Current Data| Ext
+    Ext -->|Impedance & Resonance| HM
+    PI -->|Observe Control Effort| HM
+    HM -->|RUL & Health Status| UI[User Interface / Cloud]
