@@ -1,5 +1,3 @@
-# IPM_Aging_Disclosure.md
-
 ## 1. Title of the Invention
 **Hybrid Multi-Domain Prognostic Observer for Integrated Power Modules (IPM) using Statistical Latency and Thermal Transient Analysis.**
 
