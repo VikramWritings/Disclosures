@@ -1,79 +1,82 @@
+# IPM_Aging_Disclosure.md
+
 ## 1. Title of the Invention
-**Hybrid Multi-Domain Prognostic Observer for Integrated Power Modules (IPM) using Statistical Latency and Thermal Transient Analysis.**
+**Hybrid Multi-Domain Prognostic Observer for Integrated Power Modules (IPM) using Active Protection-Loop Probing and ADC-based Thermal Transient Analysis.**
 
 ---
 
 ## 2. Prior Art and Novelty Analysis
 
 ### 2.1 Existing Patent Landscape
-A search of the current state of the art reveals several related but distinct methodologies:
-*   **Case-Temperature Monitoring (e.g., US20240402772A1):** Utilizes external thermal sensors to measure junction temperature ($T_j$) and predict thermal behavior. These require **additional physical hardware** (external NTCs).
-*   **Hardware-Integrated Detectors (e.g., US8736314B2):** Describes dedicated on-chip aging detectors. These require **semiconductor-level modifications** during manufacturing.
-*   **Signal Injection Methods:** Use small-signal manipulation of gate-source voltage to measure phase delays. These are often **intrusive**, potentially interfering with standard motor control loops.
+*   **Passive Monitoring (e.g., US20240402772A1):** Existing solutions focus on monitoring absolute voltage or temperature levels. They lack the ability to actively probe the internal logic state of the IPM.
+*   **Gate Driver IC Protection (e.g., US11397209B2):** Hardware-based solutions measure delays within the gate driver chip but do not correlate these with thermal impedance or provide a statistical RUL via software.
 
 ### 2.2 Novelty of the Invention
-This invention distinguishes itself through three unique technical leaps:
-1.  **Passive Signal Repurposing:** Unlike systems requiring new sensors, this invention repurposes the **VFO (Fault Output)** and **Gate-Sense** signals—lines already present in standard IPM architectures.
-2.  **Cross-Modal Verification:** It is uniquely capable of differentiating between **package-level aging** (via $dT/dt$ slope analysis) and **silicon-level aging** (via gate-sense latency) in a single unified software observer.
-3.  **Zero-Budget/Firmware-Only:** It requires no additional Bill-of-Materials (BOM) cost and no intrusive signal injection, allowing for backward compatibility via firmware updates.
+1.  **Active Protection-Loop Probing:** Utilizing a dedicated Gate Driver Enable (GDU_EN) line to stimulate the **ITRIP** pin and measure the response latency on the **VFO** pin. This allows for driver-health diagnostics even when the motor is stationary.
+2.  **Cross-Modal Verification:** Using ADC-derived thermal impedance data to validate whether timing drifts in the power stage (Shunt-based) or the logic stage (ITRIP-based) are permanent structural aging or temporary temperature fluctuations.
+3.  **Triple-Domain Diagnostics:** A single software observer that independently identifies **Mechanical** (Solder), **Silicon** (IGBT Gate), and **Logic** (Driver) aging.
 
 ---
 
 ## 3. Technical Field
-The present invention relates to power electronics and motor control systems, specifically to a non-intrusive, software-defined method for monitoring the health and estimating the Remaining Useful Life (RUL) of Integrated Power Modules (IPM) within an inverter.
+The present invention relates to power electronics and motor control systems, specifically to a non-intrusive, software-defined method for monitoring the health and estimating the Remaining Useful Life (RUL) of Integrated Power Modules (IPM).
 
 ---
 
 ## 4. Background of the Invention
-Conventional IPMs include reactive protection features such as Over-Current Protection (OCP) and Over-Temperature Protection (OTP). These only trigger after a failure has occurred. There is a critical need for a proactive solution that detects sub-threshold aging using only the signals already available to the motor control microcontroller (MCU).
+Standard IPMs, such as the IKCM15L60GD, provide an ITRIP pin for over-current protection and a VFO pin for fault reporting and NTC-based temperature monitoring. Conventionally, these are used only for reactive safety shutdowns. This invention introduces an active diagnostic observer that utilizes these existing pins to measure sub-threshold degradation in the power, thermal, and logic domains.
 
 ---
 
 ## 5. Detailed Description of the Invention
 
 ### 5.1 System Overview
-The invention is a firmware-defined "Aging Observer" that utilizes two existing feedback paths:
-1.  **VFO (Fault Output):** Decodes internal junction temperature transients.
-2.  **Gate-Sense (Feedback):** Measures nanosecond-level switching propagation delays.
+The invention is a firmware-defined "Aging Observer" utilizing three diagnostic paths:
+1.  **ADC-based VFO/NTC Monitoring:** Decodes internal junction temperature transients.
+2.  **Shunt-based Latency Mapping:** Measures switching speed via the emitter shunts.
+3.  **Active ITRIP Probing:** Measures the propagation delay of the internal protection logic.
 
-### 5.2 Thermal Transient Observer (VFO Path)
-The MCU calculates the **Normalized Thermal Impulse Response**. As solder layers fatigue, the thermal resistance ($R_{th}$) increases, leading to a steeper temperature rise ($dT/dt$) for the same current magnitude ($I^2$).
-- **Algorithm:** $HI_{thermal} = (dT/dt)_{observed} / I_{phase}^2$
-- **Significance:** Detects delamination and solder voids.
+### 5.2 Thermal Transient Observer (ADC Path)
+The MCU monitors the analog voltage on the VFO/NTC pin.
+*   **Algorithm:** During a load transient, the MCU calculates the **Normalized ADC Slope** ($dV/dt / I^2$).
+*   **Significance:** A steeper slope indicates increased internal thermal resistance ($R_{th}$), signaling solder fatigue or delamination.
 
-### 5.3 Electrical Latency Observer (Gate-Sense Path)
-The MCU uses internal high-resolution timers to timestamp the interval ($t_{pd}$) between the PWM command and the Gate-Sense confirmation. This identifies shifts in the **Threshold Voltage ($V_{th}$)** and Miller Plateau duration.
-- **Algorithm:** $\Delta t = Capture\_Time_{Sense} - Capture\_Time_{PWM}$
-- **Significance:** Detects gate-oxide degradation and semiconductor wear-out.
+### 5.3 Electrical Latency Observer (Shunt/Comparator Path)
+The MCU utilizes an internal analog comparator to detect the onset of current at the NW, NV, or NU shunt terminals.
+*   **Algorithm:** The system timestamps the interval between the PWM "ON" command and the comparator trip.
+*   **Significance:** Drift in this latency (normalized for DC-link voltage and temperature) identifies IGBT gate-oxide wear.
 
-### 5.4 Statistical RUL Fusion
-The system implements a **Bayesian Update Model** to predict failure:
-1.  **Digital Birth Certificate:** Records "Golden Signatures" during the first 100 hours of operation.
-2.  **Drift Analysis:** Tracks the moving average of both signals.
-3.  **Cross-Validation:** If a timing shift is detected without a thermal shift, it is flagged as silicon wear. If both shift, it indicates accelerated end-of-life.
+### 5.4 Active Logic Observer (ITRIP Path)
+During system initialization or idle states, the MCU executes a **"Health Check Pulse."**
+*   **Algorithm:** The MCU asserts the GDU_EN line (connected to ITRIP) and measures the nanosecond-level delay until the VFO pin pulls LOW.
+*   **Significance:** This measures the propagation delay of the internal logic and level-shifters. A drift here indicates aging of the internal driver circuitry or supply decoupling capacitors.
+
+### 5.5 Statistical RUL Fusion
+The system fuses these inputs into a **Bayesian Statistical Model** to predict the time remaining until the IPM violates safety-critical reliability limits.
 
 ---
 
 ## 6. List of Claims
 
-**Claim 1:** A method for estimating the health of an Integrated Power Module (IPM) in a motor control system, the method comprising:
-*   Capturing a thermal feedback signal (VFO) and an electrical feedback signal (Gate-Sense) using existing microcontroller peripherals;
-*   Extracting a thermal transient feature and an electrical timing feature from said signals;
-*   Calculating a combined Health Index (HI) based on the divergence of these features from a stored baseline.
+**Claim 1:** A method for estimating the health of an IPM in a motor control system, comprising:
+*   Sampling an analog voltage via an **ADC channel** to extract a thermal transient feature;
+*   Capturing a switching latency via a **shunt-based comparator** to extract a power-stage timing feature;
+*   Measuring a protection-loop latency via an **active ITRIP stimulus** to extract a logic-stage timing feature;
+*   Calculating a combined Health Index (HI) from these features.
 
-**Claim 2:** The method of Claim 1, wherein the thermal transient feature is a normalized slope ($dT/dt / I^2$) used as a proxy for the thermal resistance ($R_{th}$) of the module’s packaging.
+**Claim 2:** The method of Claim 1, wherein the thermal transient feature is a **Normalized ADC Slope** ($dV/dt / I^2$) representing internal thermal impedance shifts.
 
-**Claim 3:** The method of Claim 1, wherein the electrical timing feature is a propagation delay measurement ($t_{pd}$) between a PWM command and a gate-sense feedback signal to identify shifts in gate-charge dynamics.
+**Claim 3:** The method of Claim 1, wherein the power-stage timing feature is the temporal delta between a PWM transition and a shunt current rise, normalized against absolute temperature readings from the ADC.
 
-**Claim 4:** The method of Claim 3, wherein the electrical timing feature further comprises a differential analysis between turn-on and turn-off latencies to isolate gate threshold voltage ($V_{th}$) shifts from driver-circuit drift.
+**Claim 4:** The method of Claim 1, further comprising an **Active Diagnostic Mode** wherein the MCU initiates a pulse on the ITRIP pin and measures the response time on the VFO pin to isolate driver-logic aging.
 
-**Claim 5:** A software-defined prognostic system that differentiates between package-level aging and silicon-level aging by cross-referencing the thermal transient feature of Claim 2 with the electrical timing feature of Claim 3.
+**Claim 5:** A software-defined prognostic system that differentiates between package-level aging, silicon-level aging, and logic-level aging without additional external sensors.
 
-**Claim 6:** A statistical Remaining Useful Life (RUL) estimation algorithm that calculates the rate of change of the combined Health Index and extrapolates the time remaining until a safety-critical degradation threshold is reached.
+**Claim 6:** A statistical RUL estimation algorithm that extrapolates the combined Health Index drift toward a predefined failure boundary.
 
 ---
 
 ## 7. Advantages
-*   **No Hardware Cost:** Works on existing hardware architectures.
-*   **Proactive:** Detects failures before they cause system downtime.
-*   **Robust:** Cross-modal analysis (Thermal + Electrical) prevents false alarms from ambient temperature changes.
+*   **Active Self-Test:** Can verify the health of the safety system even when the motor is idle.
+*   **Zero-Budget:** Optimized for standard IKCM15L60GD architectures with no additional BOM cost.
+*   **High Integrity:** Uses three independent physics domains to provide a high-confidence RUL estimate.
