@@ -55,7 +55,9 @@ There is a critical need for a method that (a) extracts diagnostic information f
 ## 4. Detailed Description: Conjunctive Operating-Region Gating
 The system inverts established stall-detector design practice by deliberately operating within the window that minimum-$I_q$ gating excludes:
 
-$$\text{diagnostic\_active} = (\text{phase\_id} = \text{CIRC\_DWELL}) \wedge (\omega_{\text{cmd}} < \omega_{\text{dwell\_th}})$$
+```
+diagnostic_active = (phase_id == CIRC_DWELL) AND (ω_cmd < ω_dwell_th)
+```
 
 This conjunction distinguishes the diagnostic dwell from coincidentally-low-$I_q$ operating points. Within the gated window, the small mean-$I_q$ baseline maximizes fractional resolvability of degradation signatures.
 
@@ -68,7 +70,7 @@ Cavitation produces stochastic torque pulsations as vapor cavities collapse on t
 1. **Capture:** $I_q$ samples within the gated dwell window at the current control loop rate (8–16 kHz).
 2. **Compute:** Variance $\sigma^2_{I_q}$ and band-limited spectral energy $E_{\text{cav}} = \int_{50}^{500} |\widehat{I_q}(f)|^2 df$.
 3. **Compensate:** Pass through the physics-aware compensator (Section 9) before scoring.
-4. **Score:** $C_s = \sqrt{\text{var\_ratio} \cdot \text{band\_ratio}}$ from compensated residuals.
+4. **Score:** $C_s = \sqrt{r_{var} \cdot r_{band}}$ (where $r_{var}$ and $r_{band}$ are commissioning-baseline ratios) from compensated residuals.
 
 ---
 
@@ -150,7 +152,7 @@ Parameter estimates $\boldsymbol{\theta}$ of the compensator are explicitly NOT 
 The four compensated residuals AND the four compensator suspension-state flags feed a multi-hypothesis Bayesian recursive filter operating in three asynchronous loops:
 * **High-Speed Loop:** Captures $I_q$ and $di/dt$; computes per-pulse and per-interval features.
 * **Compensation Loop:** Per-cycle update of $\boldsymbol{\theta}$ with all four mechanisms; emits residuals + meta-state.
-* **Prognostic Loop:** Updates posterior over $\{\text{NULL}, \text{CAVITATION}, \text{RESTRICTION}, \text{WEAR}, \text{AIR\_ENTRAINMENT}\}$ at end of each wash cycle.
+* **Prognostic Loop:** Updates posterior over {NULL, CAVITATION, RESTRICTION, WEAR, AIR_ENTRAINMENT} at end of each wash cycle.
 
 ### 10.1 The Null Hypothesis as a Structural Element
 Unlike prior-art Bayesian/fuzzy pump classifiers (Liu 2015; Perovic; Luo 2015), the **null no-degradation hypothesis is a first-class hypothesis** with its own prior, likelihood, and posterior.
