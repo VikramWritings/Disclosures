@@ -54,6 +54,33 @@ The firmware operates in three asynchronous loops to manage the constraints of a
 * **Fusion Loop:** Normalizes data for temperature and load, calculating a multi-physics Health Index.
 * **Prediction Loop:** Uses a Bayesian Recursive Filter to update the degradation slope and project the RUL in operational hours.
 
+
+---
+
+## 6.5 Detailed Description: Physics-Aware Confounder Compensator
+A small recursive linear estimator runs per indicator, learning the normal mapping between operating conditions and indicator values from running history alone — no labeled training data, no factory characterization beyond the existing commissioning baseline. The compensator is distinguished from prior-art adaptive filtering by four cooperating mechanisms tuned to the physics of irreversible material decay.
+
+### 6.5.1 The Model
+For each indicator $y \in \{di/dt, \Delta f_r\}$, the compensator maintains a 6-coefficient linear model:
+$$\hat{y}(\mathbf{x}) = \theta_0 + \theta_1 V_{dc} + \theta_2 I_{load} + \theta_3 T_{motor} + \theta_4 \theta_{rotor} + \theta_5 t_{run}$$
+The residual $e = y - \hat{y}$ is what the Health Index sees, not the raw indicator.
+
+### 6.5.2 Asymmetric Forgetting Tied to Decay Irreversibility
+Each indicator has a known decay direction (permeability decreases, parasitic capacitance drifts in one direction). The recursive estimator uses two different forgetting factors:
+* $\lambda_{conf} \approx 0.99$ — applied when the residual sign matches the reversible (confounder) direction
+* $\lambda_{decay} \approx 1.000$ — applied when the residual sign matches the irreversible (decay) direction
+
+This makes the estimator continuously eager to absorb confounders but structurally unable to absorb decay-direction residuals as fast as they accumulate.
+
+### 6.5.3 Bidirectional Cross-Indicator Consistency
+The two indicators ($di/dt$ for permeability, $f_r$ for insulation) age via correlated mechanisms — both accelerated by thermal stress and operating duty. The compensator suspends updates whenever residuals from both indicators share the same sign relative to their respective decay directions for at least $N$ consecutive measurements. Confounders typically affect one indicator in isolation; real decay produces correlated bidirectional residuals.
+
+### 6.5.4 Operating-Envelope Gating
+During commissioning, the firmware records the convex hull (or covariance ellipsoid) of operating-condition vectors $\mathbf{x}$ encountered. Updates are inhibited whenever the present operating-condition vector falls outside this commissioning-validated envelope, preventing the estimator from extrapolating into untested regions.
+
+### 6.5.5 Meta-State as Classifier Evidence
+The compensator emits two outputs per measurement: the residual value AND an update-suspension-state flag indicating whether the compensator has been frozen for the past $M$ measurements. Sustained suspension is itself diagnostic — it means the compensator detects something it cannot explain via operating-condition variation. The Bayesian Health Index treats prolonged suspension as additional evidence shifting the posterior toward non-null (decay) hypotheses.
+
 ---
 
 ## 7. Comparative Advantage
@@ -64,6 +91,7 @@ The firmware operates in three asynchronous loops to manage the constraints of a
 | **Detection Timing** | Near-failure (Reactive) | Material decay (Proactive) |
 | **Sensor Needs** | Accelerometers / Ext. CTs | **Software-only** |
 | **Low Freq. Handling** | Filtered out as noise | **Leveraged** as data source |
+| **Confounder Handling** | Static rejection rules | **Online unsupervised, irreversibility-protected** |
 | **Cost** | High (Additional BoM) | **Zero** (Firmware update) |
 
 ---
@@ -73,6 +101,7 @@ The firmware operates in three asynchronous loops to manage the constraints of a
 2. An algorithm that extracts **Resonance Frequency Shifts** from the switching transients of a **Low Frequency Inverter** without external high-frequency signal injection.
 3. A predictive system that utilizes a **Bayesian filter** to fuse magnetic and electrical decay scores into a unified RUL estimate.
 4. A method as in Claim 1, using **current ripple curvature** ($d^2i/dt^2$) to identify the onset of magnetic saturation as a precursor to motor failure.
+5. A method as in Claims 1 and 2, comprising a **physics-aware online recursive linear estimator** per indicator that (a) maintains an asymmetric forgetting factor with a near-unity value applied to residuals whose sign matches an irreversible-decay direction; (b) suspends coefficient updates whenever residuals from both magnetic and electrical indicators share the same sign relative to their respective decay directions for at least $N$ consecutive measurements; (c) suspends coefficient updates whenever the present operating-condition vector falls outside a commissioning-observed subspace; and (d) emits an update-suspension-state signal that is provided as additional evidence to the downstream Bayesian Health Index; wherein parameter estimates of said estimator are not used by any closed-loop control function of the inverter.
 
 ## 9. Prior Art and Novelty Analysis
 
@@ -81,6 +110,8 @@ This invention acknowledges several existing techniques in motor diagnostics:
 *   **MCSA (Motor Current Signature Analysis):** Commonly used for detecting rotor bar breakage but lacks sensitivity to long-term magnetic core material decay.
 *   **PWM-Based Parameter Identification:** Techniques such as those described in [US11656286B2](https://patents.google.com/patent/US11656286B2/en) utilize current ripples for real-time inductance ($L$) estimation to improve control loop performance.
 *   **High-Frequency Resonance Monitoring:** Academic studies (e.g., [IEEE 1531603](https://ieee.org)) have demonstrated that insulation aging causes shifts in parasitic capacitance ($C_s$), leading to resonance shifts.
+*   **Variable Forgetting Factor RLS ([US 7,225,215](https://patents.google.com/patent/US7225215B2/en); academic VFF literature):** Adaptive forgetting based on residual *magnitude* statistics. Symmetric in residual sign.
+*   **Compensation Learning for Engine Diagnostics ([US 10,578,045](https://patents.google.com/patent/US10578045B2/en)):** Drift detection followed by command-side compensation. Operates within the control loop, not as a diagnostic-side residual generator.
 
 ### 9.2 Distinguishing Novelty of the Present Invention
 The present invention is distinguished from the prior art by the following "Inventive Steps":
@@ -88,3 +119,5 @@ The present invention is distinguished from the prior art by the following "Inve
 2.  **Permeability-to-RUL Mapping:** Unlike prior art that identifies Inductance ($L$) for control purposes, this system maps the *decay rate* of $L$ directly to the physical fatigue of core magnetic domains (Permeability Decay), which is a novel prognostic indicator.
 3.  **Passive Edge-Ringing Analysis:** The invention captures resonance frequency shifts ($\Delta f_r$) by oversampling the natural "ringing" of the Low Frequency Inverter's switching transitions, eliminating the need for the costly high-frequency signal injection required by existing aging-monitoring patents.
 4.  **Multi-Physics Health Fusion:** The unique statistical weighting of core material health (magnetic) and winding dielectric health (electrical) provides a more robust RUL estimate than single-domain models.
+5.  **Asymmetric Forgetting Tied to Physical Irreversibility:** Unlike Variable Forgetting Factor RLS prior art (US 7,225,215), which adapts forgetting based on residual magnitude symmetrically in residual sign, the present invention's forgetting factor is *direction-dependent*, with a near-unity (frozen) value specifically applied to residuals whose sign matches the physically-irreversible decay direction. This binds the adaptive-filtering machinery to a domain-specific physical asymmetry unique to material-decay prognostics.
+6.  **Bidirectional Cross-Indicator Consistency with Operating-Envelope Gating:** Update suspension is conditioned on residuals from BOTH the magnetic AND electrical indicators sharing the same decay-direction sign over $N$ consecutive measurements, AND on the operating-condition vector falling within a commissioning-observed envelope. The compensator's update-suspension-state is exposed as additional evidence to the Bayesian Health Index. No prior art reference (single-indicator adaptive filters, generic concept-drift methods, or compensation-learning patents like US 10,578,045) combines these mechanisms.

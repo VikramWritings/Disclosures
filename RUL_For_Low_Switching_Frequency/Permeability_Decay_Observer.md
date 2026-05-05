@@ -86,6 +86,81 @@ void run_health_observer(float v_d_inj, float i_d_measured) {
 }
 ```
 
+
+---
+
+## 4.5 Confounder Compensator (C-Code Addition)
+
+The observer's existing cold-state-R_s gate handles thermal confounders. The compensator below extends this to handle V_dc, load, rotor-position, and other operating-condition effects via a small RLS estimator with an irreversibility-aware pause-update rule.
+
+```c
+/* RLS-based confounder compensator with pause-update rule.
+ * Coexists with the existing run_health_observer() above.
+ * Output residual feeds the Health Index instead of raw l_filt.
+ */
+
+#define LAMBDA_CONF       0.99f    /* confounder direction */
+#define LAMBDA_DECAY      1.000f   /* decay direction (frozen) */
+#define SUSP_PERSIST_N    8        /* consecutive same-sign samples */
+
+typedef struct {
+    float theta[6];          /* RLS coefficients */
+    float P[36];             /* 6x6 covariance, row-major */
+    float resid;             /* last residual */
+    int   sign_streak;       /* consecutive same-sign residuals */
+    bool  in_envelope;       /* operating-envelope check */
+    bool  suspended;         /* current suspension state */
+    int   suspension_count;  /* cycles in suspension */
+} CompensatorState_t;
+
+/* Asymmetric forgetting: select lambda based on residual sign */
+static float select_lambda(float residual, int decay_sign) {
+    return (residual * decay_sign > 0) ? LAMBDA_DECAY : LAMBDA_CONF;
+}
+
+/* Operating-envelope check (ellipsoidal) */
+static bool inside_envelope(const float *x, const float *x_center,
+                            const float *envelope_radii) {
+    float dist_sq = 0.0f;
+    for (int i = 0; i < 5; i++) {
+        float d = (x[i] - x_center[i]) / envelope_radii[i];
+        dist_sq += d * d;
+    }
+    return dist_sq <= 1.0f;
+}
+
+/* Per-indicator compensator update. decay_sign: -1 if y decreases with
+ * decay (e.g., permeability), +1 if it increases. */
+void compensator_update(CompensatorState_t *c, float y_meas,
+                        const float *x, int decay_sign,
+                        bool envelope_ok) {
+    /* Predict expected y given operating conditions */
+    float y_pred = c->theta[0];
+    for (int i = 0; i < 5; i++) y_pred += c->theta[i+1] * x[i];
+    c->resid = y_meas - y_pred;
+
+    /* Track consecutive same-sign residuals (in decay direction) */
+    if (c->resid * decay_sign > 0) c->sign_streak++;
+    else c->sign_streak = 0;
+
+    /* Suspension if outside envelope OR sustained decay-direction residual */
+    c->suspended = (!envelope_ok) ||
+                   (c->sign_streak >= SUSP_PERSIST_N);
+
+    if (c->suspended) {
+        c->suspension_count++;
+        return;  /* DO NOT update theta or P */
+    }
+
+    /* Normal RLS update with asymmetric forgetting */
+    float lambda = select_lambda(c->resid, decay_sign);
+    rls_update(c->theta, c->P, x, c->resid, lambda);
+    c->suspension_count = 0;
+}
+```
+
+The `c->suspension_count` value is exposed to the Health Index as the meta-state evidence flag described in Section 6.5.5 of the disclosure.
+
 ---
 
 ## 5. Decision Matrix (Fault Handling)
