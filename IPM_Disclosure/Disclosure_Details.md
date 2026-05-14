@@ -461,6 +461,188 @@ If deliberate test-current injection during shutdown is not practical (e.g., in 
 
 **Disadvantage**: Rare fault events mean infrequent $D_3$ measurements; trend analysis ($\frac{dD_3}{dt}$) requires long observation times. The deliberate self-test method (preferred) enables frequent measurements even in benign operating conditions.
 
+#### 3.4.10 Pseudocode for Protection-Path Degradation Measurement
+
+The following pseudocode describes the complete self-test procedure for measuring $D_3$. It is intended for execution on the host microcontroller (e.g., RA6T3) during a converter shutdown window. All timing references use a shared 32-bit timer base to eliminate phase-shift errors between the ITRIP and VFO capture channels.
+
+```pseudocode
+// =====================================================================
+// PROCEDURE: measure_protection_path_degradation()
+// Returns:   D3 in [0, 1], or FAULT_CODE on error
+// Inputs:    Module state (operating-point context), NVM baselines/LUT
+// =====================================================================
+
+CONSTANTS:
+    V_ITRIP_TH          = 0.475 V            // overcurrent threshold (mid of 0.47-0.50 V)
+    DELTA3_EOL          = 350 ns             // end-of-life residual threshold
+    EPSILON_NOISE       = 50  ns             // timer-jitter / threshold-crossing noise floor
+    TEST_PULSE_MAX_DUR  = 10  us             // hard upper bound on injected stimulus
+    TEST_CURRENT_MAX    = 0.6 * I_RATED      // non-destructive amplitude
+    MAX_WAIT_VFO        = 5   us             // VFO-edge capture watchdog
+    N_SAMPLES_AVG       = 8                  // averaging window per measurement event
+
+procedure measure_protection_path_degradation():
+
+    // ---- 1. Preconditions: only execute in a safe shutdown window -----
+    if not converter_in_shutdown_window():
+        return FAULT_NOT_IN_SHUTDOWN
+
+    if bus_voltage(V_DC) outside [V_DC_MIN_TEST, V_DC_MAX_TEST]:
+        return FAULT_BUS_OUT_OF_RANGE
+
+    if T_j > T_J_TEST_MAX or T_j < T_J_TEST_MIN:
+        return FAULT_TEMP_OUT_OF_RANGE
+
+    // Snapshot operating-point context for normalization
+    V_DD       = read_adc(LVIC_SUPPLY)
+    T_j_meas   = read_adc(NTC) -> convert_to_Tj()
+    R_pull_up  = NVM.get(VFO_PULLUP_OHMS)
+
+    // ---- 2. Arm timer-capture peripherals on a SHARED time base ------
+    timer_base.reset()
+    capture_ch_ITRIP.configure(rising_edge,  source = SHUNT_COMPARATOR_OUT)
+    capture_ch_VFO  .configure(falling_edge, source = IPM_VFO_PIN)
+    capture_ch_ITRIP.arm()
+    capture_ch_VFO  .arm()
+
+    // ---- 3. Acquire averaged latency over N events -------------------
+    latencies = []
+    repeat N_SAMPLES_AVG times:
+
+        // 3a. Inject non-destructive stimulus
+        ok = inject_test_current_pulse(
+                 amplitude   = TEST_CURRENT_MAX,
+                 max_duration= TEST_PULSE_MAX_DUR,
+                 method      = HIGH_FREQ_PWM_BURST)   // or dedicated injector
+        if not ok:
+            disarm_all_captures()
+            return FAULT_INJECTION_FAILED
+
+        // 3b. Wait for ITRIP threshold crossing with watchdog
+        t_ITRIP = capture_ch_ITRIP.wait(timeout = TEST_PULSE_MAX_DUR)
+        if t_ITRIP == TIMEOUT:
+            disarm_all_captures()
+            return FAULT_NO_ITRIP_EDGE          // threshold never crossed
+
+        // 3c. Wait for VFO assertion (high -> low)
+        t_VFO = capture_ch_VFO.wait(timeout = MAX_WAIT_VFO)
+        if t_VFO == TIMEOUT:
+            disarm_all_captures()
+            log_critical("Protection path failed to assert")
+            return FAULT_VFO_NO_RESPONSE        // protection-path failure
+
+        // 3d. Compute single-event latency
+        t_lat = t_VFO - t_ITRIP                 // ns, same timer base
+        if t_lat < T_LAT_MIN_SANITY or t_lat > T_LAT_MAX_SANITY:
+            continue                            // discard out-of-range outlier
+        latencies.append(t_lat)
+
+        // 3e. Allow IPM internal logic to fully reset before next iter
+        clear_fault_latch()
+        wait(FAULT_RESET_SETTLE_TIME)
+
+    disarm_all_captures()
+
+    if length(latencies) < (N_SAMPLES_AVG / 2):
+        return FAULT_INSUFFICIENT_SAMPLES
+
+    // ---- 4. Robust aggregation (median + trimmed mean) ---------------
+    latencies = remove_outliers(latencies, method = MAD, k = 3)
+    t_ITRIP_to_VFO = mean(latencies)            // raw measured latency
+
+    // ---- 5. Operating-point normalization via 3D LUT -----------------
+    t_predicted = LUT_3D_interp(
+                      table  = NVM.LUT_D3_BASELINE,
+                      axes   = (V_DD, T_j_meas, R_pull_up))
+
+    delta_3 = t_ITRIP_to_VFO - t_predicted      // residual, ns
+
+    // ---- 6. Convert to normalized degradation score ------------------
+    delta_3_0 = NVM.get(DELTA3_FIRST_SERVICE_BASELINE)
+    if delta_3_0 == UNINITIALIZED:
+        // First-ever execution: store as life-zero baseline
+        NVM.put(DELTA3_FIRST_SERVICE_BASELINE, delta_3)
+        return D3 = 0.0
+
+    delta_3_shifted = delta_3 - delta_3_0
+    D3 = clip( delta_3_shifted / (DELTA3_EOL - EPSILON_NOISE), 0.0, 1.0 )
+
+    // ---- 7. Trend (dD3/dt) and persistence ---------------------------
+    history.push((timestamp_now(), D3))
+    dD3_dt = linear_regression_slope(history.window(last_N = 10))
+
+    NVM.put(LAST_D3, D3)
+    NVM.put(LAST_dD3_dt, dD3_dt)
+
+    // ---- 8. Local guardrail (independent of ML fusion) ---------------
+    if D3 >= 0.8 or dD3_dt > DD3_DT_CRITICAL:
+        raise_alert(LEVEL = CRITICAL, MECH = "Protection-IC aging")
+
+    return D3
+end procedure
+```
+
+**Key implementation notes:**
+
+- **Shared time base (step 2)** is mandatory; ITRIP and VFO must be captured on the same hardware counter to keep the latency measurement free of cross-channel skew. On the RA6T3, both edges are routed to MTIOC3A/MTIOC3B of the same MTU3 instance.
+- **Stimulus safety (step 3a)** is enforced by both an amplitude clamp ($\le 0.6\,I_{rated}$) and a hard duration limit (10 µs). The high-frequency PWM burst produces a small, brief current surge that just barely crosses $V_{ITRIP,TH}$, sufficient to trip the comparator without stressing the die.
+- **Watchdog timeouts (steps 3b, 3c)** convert silent failures of the protection path into explicit fault codes. A `FAULT_VFO_NO_RESPONSE` indicates that the protection function itself has failed and warrants immediate shutdown.
+- **Outlier rejection (step 4)** uses median-absolute-deviation filtering to discard captures corrupted by EMI or ESD events that may occur during the test pulse.
+- **First-service baseline (step 6)** is captured the first time the procedure executes after manufacture and stored permanently in NVM; all subsequent measurements are referenced against it.
+- **Local guardrail (step 8)** ensures that a severe $D_3$ excursion triggers a `CRITICAL` alert even if the supervised-learning fusion stage is unavailable (defense-in-depth).
+
+#### 3.4.11 Flowchart for Protection-Path Degradation Measurement
+
+The flowchart below illustrates the control flow of the procedure described in §3.4.10. Decision diamonds correspond to the precondition checks, capture watchdogs, and threshold comparisons. Fault-exit branches map to the `FAULT_*` return codes in the pseudocode.
+
+```mermaid
+flowchart TD
+    A([Start: measure_D3 trigger]) --> B{Converter in<br/>shutdown window?}
+    B -- No --> X1[Return<br/>FAULT_NOT_IN_SHUTDOWN]
+    B -- Yes --> C{V_DC, T_j within<br/>safe test range?}
+    C -- No --> X2[Return<br/>FAULT_*_OUT_OF_RANGE]
+    C -- Yes --> D[Snapshot V_DD, T_j, R_pull_up<br/>Reset shared timer base<br/>Arm ITRIP &amp; VFO captures]
+    D --> E[Init sample loop<br/>i = 0, latencies = empty]
+    E --> F[Inject non-destructive<br/>test current pulse<br/>amp ≤ 0.6·I_rated, dur ≤ 10 µs]
+    F --> G{ITRIP edge captured<br/>before timeout?}
+    G -- No --> X3[Disarm captures<br/>Return FAULT_NO_ITRIP_EDGE]
+    G -- Yes --> H{VFO falling edge<br/>captured before<br/>MAX_WAIT_VFO?}
+    H -- No --> X4[Disarm captures<br/>Log CRITICAL<br/>Return FAULT_VFO_NO_RESPONSE]
+    H -- Yes --> I[t_lat = t_VFO − t_ITRIP]
+    I --> J{t_lat within<br/>sanity bounds?}
+    J -- No --> K[Discard sample]
+    J -- Yes --> L[Append t_lat to latencies]
+    K --> M[Clear fault latch<br/>Wait settle time]
+    L --> M
+    M --> N{i &lt; N_SAMPLES_AVG?}
+    N -- Yes --> F
+    N -- No --> O{Enough valid<br/>samples?}
+    O -- No --> X5[Return<br/>FAULT_INSUFFICIENT_SAMPLES]
+    O -- Yes --> P[Remove outliers MAD<br/>t_ITRIP→VFO = mean]
+    P --> Q[Interpolate t_predicted<br/>from 3D LUT<br/>V_DD, T_j, R_pull_up]
+    Q --> R[δ3 = t_ITRIP→VFO − t_predicted]
+    R --> S{First-service<br/>baseline δ3_0<br/>in NVM?}
+    S -- No --> T[Store δ3 as δ3_0<br/>Return D3 = 0.0]
+    S -- Yes --> U[D3 = clip δ3 − δ3_0<br/>÷ DELTA3_EOL − EPSILON_NOISE<br/>into 0..1]
+    U --> V[Push D3, timestamp into history<br/>dD3/dt = slope of last 10 pts]
+    V --> W{D3 ≥ 0.8 or<br/>dD3/dt &gt; critical?}
+    W -- Yes --> Y[Raise CRITICAL alert<br/>Mechanism = Protection-IC aging]
+    W -- No --> Z[Persist D3, dD3/dt to NVM]
+    Y --> Z
+    Z --> EndOK([Return D3])
+
+    classDef fault fill:#fde2e2,stroke:#c0392b,color:#641e16;
+    classDef ok fill:#e2f7e2,stroke:#27ae60,color:#1d4f2c;
+    class X1,X2,X3,X4,X5 fault;
+    class EndOK,T ok;
+```
+
+**Reading the flowchart:**
+
+- The **left/red branches** represent fault exits; each corresponds to a specific `FAULT_*` code and a defined system response (e.g., `FAULT_VFO_NO_RESPONSE` triggers immediate shutdown because the protection path itself has failed).
+- The **central path** is the nominal measurement loop: inject → capture ITRIP → capture VFO → compute single-event latency → repeat until `N_SAMPLES_AVG` valid samples are collected.
+- The **lower section** performs operating-point normalization (3D LUT), residual computation, baseline-referenced score normalization into $D_3 \in [0,1]$, trend estimation ($dD_3/dt$), and the independent CRITICAL guardrail before persistence and return.
+
 ---
 
 ### 3.5 Supervised-Learning Fusion Model
